@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RELAY — クリップボード中継</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#15171C;
+    --muted:#6C7480;
+    --faint:#9AA1AC;
+    --paper:#E9ECF1;
+    --surface:#FFFFFF;
+    --line:#DCE0E8;
+    --accent:#2B4CE0;        /* signal blue = 送信(↑) */
+    --accent-ink:#1B34AE;
+    --recv:#0E9C7E;          /* teal = 受信(↓) */
+    --recv-ink:#0A6B57;
+    --live:#12B886;
+    --warn:#DB5227;
+    --shadow:0 1px 2px rgba(20,30,60,.05), 0 12px 30px -18px rgba(20,30,60,.28);
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --disp:"Space Grotesk",system-ui,sans-serif;
+    --body:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",YuGothic,"Noto Sans JP",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(120% 60% at 100% -10%, rgba(43,76,224,.06), transparent 60%),
+      radial-gradient(120% 60% at 0% -10%, rgba(14,156,126,.06), transparent 60%),
+      var(--paper);
+    color:var(--ink);
+    font-family:var(--body);
+    line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:20px 18px 56px}
+
+  /* ── signature: link status bar ─────────────────────── */
+  .link{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:14px;
+    box-shadow:var(--shadow);
+    padding:14px 16px;
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    margin-bottom:18px;
+  }
+  .brand{display:flex;align-items:baseline;gap:9px;margin-right:auto}
+  .brand b{
+    font-family:var(--disp);font-weight:700;font-size:20px;letter-spacing:.14em;
+    color:var(--ink);
+  }
+  .brand span{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.02em}
+  .channel{
+    font-family:var(--mono);font-size:12.5px;color:var(--muted);
+    display:flex;align-items:center;gap:10px;
+    background:var(--paper);border:1px solid var(--line);border-radius:999px;
+    padding:6px 12px;
+  }
+  .channel .dev{color:var(--ink);font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .channel .arrows{color:var(--faint);letter-spacing:.1em}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+  .dot.live{background:var(--live);box-shadow:0 0 0 0 rgba(18,184,134,.5);animation:pulse 2s infinite}
+  .dot.err{background:var(--warn)}
+  .dot.check{background:var(--accent)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(18,184,134,.45)}70%{box-shadow:0 0 0 7px rgba(18,184,134,0)}100%{box-shadow:0 0 0 0 rgba(18,184,134,0)}}
+  @media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
+  .status{font-family:var(--mono);font-size:12.5px;display:flex;align-items:center;gap:8px}
+  .status .t{color:var(--muted)}
+  .sync{font-family:var(--mono);font-size:11px;color:var(--faint)}
+
+  /* ── channels ───────────────────────────────────────── */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:720px){.grid{grid-template-columns:1fr}}
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    box-shadow:var(--shadow);padding:16px;position:relative;overflow:hidden;
+  }
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+  .card.recv::before{background:var(--recv)}
+  .card.send::before{background:var(--accent)}
+  .head{display:flex;align-items:center;gap:8px;margin:0 0 12px}
+  .head .ic{font-family:var(--mono);font-weight:700;font-size:15px}
+  .card.recv .head .ic{color:var(--recv-ink)}
+  .card.send .head .ic{color:var(--accent-ink)}
+  .head h2{font-family:var(--disp);font-weight:600;font-size:15px;margin:0;letter-spacing:.01em}
+  .head .sub{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto}
+
+  .payload{
+    background:var(--paper);border:1px solid var(--line);border-radius:10px;
+    padding:12px 13px;min-height:96px;white-space:pre-wrap;word-break:break-word;
+    font-size:14.5px;color:var(--ink);
+    max-height:230px;overflow:auto;transition:background .5s ease;
+  }
+  .payload.empty{color:var(--faint);font-style:normal}
+  .payload.flash{background:rgba(14,156,126,.14)}
+  .meta{font-family:var(--mono);font-size:11px;color:var(--muted);margin:9px 2px 0;display:flex;gap:10px;flex-wrap:wrap}
+  .meta .from{color:var(--recv-ink);font-weight:500}
+
+  textarea{
+    width:100%;border:1px solid var(--line);border-radius:10px;background:var(--paper);
+    padding:12px 13px;font-family:var(--body);font-size:14.5px;color:var(--ink);
+    resize:vertical;min-height:96px;line-height:1.6;
+  }
+  textarea:focus{outline:2px solid rgba(43,76,224,.35);outline-offset:1px;border-color:var(--accent)}
+
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px;align-items:center}
+  button{
+    font-family:var(--body);font-size:13.5px;font-weight:600;cursor:pointer;
+    border-radius:9px;padding:9px 15px;border:1px solid var(--line);
+    background:var(--surface);color:var(--ink);transition:transform .06s ease,background .15s;
+  }
+  button:hover{background:#F3F5F9}
+  button:active{transform:translateY(1px)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-ink)}
+  button.recv{background:var(--recv);border-color:var(--recv);color:#fff}
+  button.recv:hover{background:var(--recv-ink)}
+  button.ghost{background:transparent}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .toggle{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+  .toggle input{accent-color:var(--recv)}
+  .say{font-family:var(--mono);font-size:11.5px;min-height:16px;margin-top:8px}
+  .say.ok{color:var(--recv-ink)}
+  .say.no{color:var(--warn)}
+
+  /* ── history ────────────────────────────────────────── */
+  details{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  summary{cursor:pointer;list-style:none;padding:13px 16px;font-family:var(--disp);font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
+  summary::-webkit-details-marker{display:none}
+  summary .chev{font-family:var(--mono);color:var(--faint);margin-left:auto;font-size:12px}
+  details[open] summary .chev{transform:rotate(90deg)}
+  .body{padding:4px 16px 16px}
+  .hist{display:flex;flex-direction:column;gap:8px}
+  .hist .it{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--paper)}
+  .hist .it .txt{font-size:13.5px;white-space:pre-wrap;word-break:break-word;max-height:70px;overflow:auto}
+  .hist .it .b{display:flex;gap:9px;align-items:center;margin-top:6px}
+  .hist .it .b .m{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-right:auto}
+  .hist .it .b button{padding:4px 10px;font-size:12px}
+  .hist .none{color:var(--faint);font-size:13px;padding:6px 2px}
+
+  .field{margin:0 0 12px}
+  .field label{display:block;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin:0 0 5px;letter-spacing:.02em}
+  .field input{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-family:var(--mono);font-size:13px;background:var(--paper);color:var(--ink)}
+  .field input:focus{outline:2px solid rgba(43,76,224,.3);border-color:var(--accent)}
+  .two{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+  @media (max-width:560px){.two{grid-template-columns:1fr}}
+  .note{font-size:12.5px;color:var(--muted);line-height:1.7}
+  .note code{font-family:var(--mono);font-size:12px;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  ol.steps{margin:6px 0 0;padding-left:20px;font-size:13px;color:var(--ink)}
+  ol.steps li{margin:5px 0}
+  .warnbox{border-left:3px solid var(--warn);background:rgba(219,82,39,.06);border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--ink);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- signature: two-way link readout -->
+  <div class="link">
+    <div class="brand"><b>RELAY</b><span>クリップボード中継</span></div>
+    <div class="channel">
+      <span class="dev" id="devLabel">この端末</span>
+      <span class="arrows">⇄</span>
+      <span>📱</span>
+    </div>
+    <div class="status"><span class="dot" id="dot"></span><span class="t" id="statusText">未設定</span></div>
+    <div class="sync" id="syncText"></div>
+  </div>
+
+  <div class="grid">
+    <!-- received -->
+    <div class="card recv">
+      <div class="head">
+        <span class="ic">↓</span>
+        <h2>スマホから受信</h2>
+        <span class="sub" id="recvCount"></span>
+      </div>
+      <div class="payload empty" id="recvBox">まだ受信していません。iPhoneのショートカットから送ると、ここに表示されます。</div>
+      <div class="meta" id="recvMeta"></div>
+      <div class="row">
+        <button class="recv" id="copyBtn" disabled>コピー</button>
+        <button class="ghost" id="refreshBtn">今すぐ更新</button>
+        <label class="toggle"><input type="checkbox" id="autoCopy"> 受信で自動コピー</label>
+      </div>
+      <div class="say" id="recvSay"></div>
+    </div>
+
+    <!-- send -->
+    <div class="card send">
+      <div class="head">
+        <span class="ic">↑</span>
+        <h2>スマホへ送信</h2>
+      </div>
+      <textarea id="sendText" placeholder="ここに入力、または『PCからコピーを貼付』で流し込み"></textarea>
+      <div class="row">
+        <button class="primary" id="sendBtn">送信</button>
+        <button class="ghost" id="pasteBtn">PCからコピーを貼付</button>
+        <button class="ghost" id="clearBtn">クリア</button>
+      </div>
+      <div class="say" id="sendSay"></div>
+    </div>
+  </div>
+
+  <!-- history -->
+  <details id="histWrap">
+    <summary>最近の受信 <span class="chev">▸</span></summary>
+    <div class="body"><div class="hist" id="hist"><div class="none">履歴はまだありません。</div></div></div>
+  </details>
+
+  <!-- settings -->
+  <details id="cfgWrap">
+    <summary>接続設定 <span class="chev">▸</span></summary>
+    <div class="body">
+      <div class="field">
+        <label>ウェブアプリ URL（GASの /exec で終わるURL）</label>
+        <input id="cfgUrl" placeholder="https://script.google.com/macros/s/XXXX/exec" />
+      </div>
+      <div class="two">
+        <div class="field">
+          <label>合言葉トークン（GASの TOKEN と同じ文字列）</label>
+          <input id="cfgToken" placeholder="Code.gs で設定した合言葉" />
+        </div>
+        <div class="field">
+          <label>この端末名</label>
+          <input id="cfgDevice" placeholder="会社PC" />
+        </div>
+      </div>
+      <div class="two">
+        <div class="field">
+          <label>自動更新の間隔（秒）</label>
+          <input id="cfgPoll" type="number" min="2" max="120" placeholder="5" />
+        </div>
+        <div class="field" style="display:flex;align-items:flex-end;gap:8px">
+          <button class="primary" id="saveCfg" style="width:100%">保存して接続</button>
+        </div>
+      </div>
+      <button class="ghost" id="testBtn">接続テスト</button>
+      <div class="say" id="cfgSay"></div>
+      <div class="warnbox">合言葉トークンを知っている人はこのURLで読み書きできます。長く・秘密に保ち、本当に機微な顧客情報は中継に載せない運用を。データはGAS側の保持時間を過ぎると自動削除されます。</div>
+    </div>
+  </details>
+
+  <!-- setup guide -->
+  <details id="guideWrap">
+    <summary>初回セットアップの手順 <span class="chev">▸</span></summary>
+    <div class="body">
+      <p class="note"><b>① バックエンド（GAS）</b></p>
+      <ol class="steps">
+        <li>Googleドライブで新しいスプレッドシートを作成</li>
+        <li>「拡張機能」→「Apps Script」を開き、<code>Code.gs</code> を全部貼り付け</li>
+        <li><code>TOKEN</code> を自分だけの長い合言葉に書き換えて保存</li>
+        <li>「デプロイ」→「新しいデプロイ」→ 種類=ウェブアプリ / 実行=自分 / アクセス=全員</li>
+        <li>発行された <code>/exec</code> URL を、上の「接続設定」に貼る</li>
+      </ol>
+      <div class="warnbox">GASのコードを直したら、保存だけでは反映されません。「デプロイを管理」→ ✏️ → バージョン「新バージョン」→ デプロイ、で更新（URLは不変）。</div>
+      <p class="note" style="margin-top:14px"><b>② iPhone（ショートカット）</b> — App不要。2つ作ります。</p>
+      <p class="note"><i>PCへ送る:</i> 「クリップボードを取得」→「テキスト」で JSON を組む→「URLの内容を取得」で上のURLにPOST。<br>
+      <i>PCから受け取る:</i> 「URLの内容を取得」でGET→ 返ってきた <code>text</code> を「クリップボードにコピー」。<br>
+      具体的なアクションの並びはチャット側の手順をご覧ください。</p>
+    </div>
+  </details>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---- storage (GitHub Pagesでは保存される。Claudeプレビューではメモリのみ) ----
+  var mem = {};
+  function lsGet(k){ try{ var v=localStorage.getItem(k); return v===null?(k in mem?mem[k]:null):v; }catch(e){ return (k in mem)?mem[k]:null; } }
+  function lsSet(k,v){ mem[k]=v; try{ localStorage.setItem(k,v); }catch(e){} }
+
+  var cfg = {
+    url: lsGet('relay.url') || '',
+    token: lsGet('relay.token') || '',
+    device: lsGet('relay.device') || 'この端末',
+    poll: parseInt(lsGet('relay.poll')||'5',10) || 5
+  };
+
+  var $ = function(id){ return document.getElementById(id); };
+  var timer=null, lastSig=null, paused=false;
+
+  // ---- config UI ----
+  function fillCfg(){
+    $('cfgUrl').value=cfg.url; $('cfgToken').value=cfg.token;
+    $('cfgDevice').value=cfg.device; $('cfgPoll').value=cfg.poll;
+    $('devLabel').textContent = cfg.device || 'この端末';
+  }
+  function readCfg(){
+    cfg.url = $('cfgUrl').value.trim();
+    cfg.token = $('cfgToken').value.trim();
+    cfg.device = ($('cfgDevice').value.trim() || 'この端末');
+    var p = parseInt($('cfgPoll').value,10); cfg.poll = (p>=2&&p<=120)?p:5;
+    lsSet('relay.url',cfg.url); lsSet('relay.token',cfg.token);
+    lsSet('relay.device',cfg.device); lsSet('relay.poll',String(cfg.poll));
+    $('devLabel').textContent = cfg.device;
+  }
+
+  // ---- status ----
+  function setStatus(state, text){
+    var d=$('dot'); d.className='dot'+(state?(' '+state):'');
+    $('statusText').textContent = text;
+  }
+  function fmt(t){
+    if(!t) return '';
+    var d = new Date(t);
+    if(isNaN(d.getTime())) return String(t);
+    var p=function(n){return (n<10?'0':'')+n;};
+    return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  }
+
+  // ---- network (CORSを避ける: GETは素のfetch, POSTはtext/plain) ----
+  function apiGet(params){
+    var qs = Object.keys(params).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(params[k]);}).join('&');
+    return fetch(cfg.url+'?'+qs, {method:'GET'}).then(function(r){return r.json();});
+  }
+  function apiPost(obj){
+    return fetch(cfg.url, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(obj)
+    }).then(function(r){return r.json();});
+  }
+
+  // ---- receive / poll ----
+  function renderLatest(item){
+    var box=$('recvBox'), meta=$('recvMeta'), copy=$('copyBtn');
+    if(!item || !item.text){
+      box.className='payload empty';
+      box.textContent='まだ受信していません。iPhoneのショートカットから送ると、ここに表示されます。';
+      meta.textContent=''; copy.disabled=true; copy.dataset.text=''; return;
+    }
+    box.className='payload';
+    box.textContent=item.text;
+    meta.innerHTML='<span class="from">'+esc(item.device||'—')+'</span><span>'+fmt(item.time)+' 受信</span>';
+    copy.disabled=false; copy.dataset.text=item.text;
+  }
+  function renderHist(items){
+    var h=$('hist');
+    if(!items || !items.length){ h.innerHTML='<div class="none">履歴はまだありません。</div>'; return; }
+    h.innerHTML='';
+    items.forEach(function(it){
+      var el=document.createElement('div'); el.className='it';
+      var txt=document.createElement('div'); txt.className='txt'; txt.textContent=it.text;
+      var b=document.createElement('div'); b.className='b';
+      var m=document.createElement('span'); m.className='m'; m.textContent=(it.device||'—')+' · '+fmt(it.time);
+      var cb=document.createElement('button'); cb.textContent='コピー';
+      cb.onclick=function(){ doCopy(it.text, cb, '✓'); };
+      b.appendChild(m); b.appendChild(cb);
+      el.appendChild(txt); el.appendChild(b); h.appendChild(el);
+    });
+  }
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  function poll(){
+    if(!cfg.url || !cfg.token){ setStatus('','未設定 — 接続設定を開いてください'); return; }
+    apiGet({token:cfg.token, action:'list', n:8}).then(function(res){
+      if(!res || res.ok!==true){ setStatus('err', res && res.error==='unauthorized' ? '合言葉が一致しません' : '応答エラー'); return; }
+      var items=res.items||[];
+      var latest=items[0]||null;
+      var sig = latest ? (latest.time+'|'+latest.text) : 'none';
+      if(sig!==lastSig){
+        var isNew = (lastSig!==null); lastSig=sig;
+        renderLatest(latest); renderHist(items.slice(1));
+        $('recvCount').textContent = items.length ? (items.length+'件') : '';
+        if(isNew && latest){
+          var box=$('recvBox'); box.classList.add('flash'); setTimeout(function(){box.classList.remove('flash');},600);
+          if($('autoCopy').checked){ doCopy(latest.text, null); say('recvSay','自動コピーしました',true); }
+        }
+      }
+      setStatus(paused?'':'live', paused?'一時停止中':'接続中');
+      $('syncText').textContent='last '+fmt(new Date().toISOString());
+    }).catch(function(){
+      setStatus('err','接続できません（URL / デプロイ / ネットを確認）');
+    });
+  }
+
+  function startPoll(){ if(timer) clearInterval(timer); if(paused) return; poll(); timer=setInterval(poll, cfg.poll*1000); }
+
+  // ---- clipboard helpers ----
+  function doCopy(text, btn, okLabel){
+    var done=function(){ if(btn){ var o=btn.textContent; btn.textContent=okLabel||'コピー済'; setTimeout(function(){btn.textContent=o;},1200);} };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(function(){ fallbackCopy(text); done(); });
+    } else { fallbackCopy(text); done(); }
+  }
+  function fallbackCopy(text){
+    var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta);
+  }
+  function say(id,msg,ok){ var el=$(id); el.textContent=msg; el.className='say '+(ok?'ok':'no'); setTimeout(function(){ if(el.textContent===msg){el.textContent='';el.className='say';} },2600); }
+
+  // ---- events ----
+  $('copyBtn').onclick=function(){ var t=this.dataset.text||''; if(t){ doCopy(t,this,'コピー済'); } };
+  $('refreshBtn').onclick=function(){ poll(); };
+  $('sendBtn').onclick=function(){
+    var t=$('sendText').value;
+    if(!t){ say('sendSay','送る内容が空です',false); return; }
+    if(!cfg.url||!cfg.token){ say('sendSay','先に接続設定をしてください',false); return; }
+    this.disabled=true;
+    apiPost({token:cfg.token, device:cfg.device, text:t}).then(function(res){
+      if(res && res.ok){ say('sendSay','スマホへ送信しました',true); }
+      else { say('sendSay', (res&&res.error==='unauthorized')?'合言葉が一致しません':'送信に失敗しました', false); }
+    }).catch(function(){ say('sendSay','送信に失敗しました（接続を確認）',false); })
+    .then(function(){ $('sendBtn').disabled=false; });
+  };
+  $('pasteBtn').onclick=function(){
+    if(navigator.clipboard && navigator.clipboard.readText){
+      navigator.clipboard.readText().then(function(t){ $('sendText').value=t; }).catch(function(){ say('sendSay','貼付できませんでした。手動で貼り付けてください',false); });
+    } else { say('sendSay','この環境では自動貼付に非対応です',false); }
+  };
+  $('clearBtn').onclick=function(){ $('sendText').value=''; };
+
+  $('saveCfg').onclick=function(){ readCfg(); say('cfgSay','保存しました。接続を開始します',true); lastSig=null; startPoll(); };
+  $('testBtn').onclick=function(){
+    readCfg();
+    if(!cfg.url||!cfg.token){ say('cfgSay','URLと合言葉を入力してください',false); return; }
+    say('cfgSay','テスト中…',true);
+    apiGet({token:cfg.token, action:'ping'}).then(function(res){
+      if(res && res.ok){ say('cfgSay','接続OK。合言葉も一致しています',true); }
+      else { say('cfgSay',(res&&res.error==='unauthorized')?'つながったが合言葉が不一致':'応答が不正です',false); }
+    }).catch(function(){ say('cfgSay','接続できません。URL・デプロイ設定・ネットを確認',false); });
+  };
+
+  // pause polling when tab hidden (省エネ)
+  document.addEventListener('visibilitychange', function(){
+    paused = document.hidden;
+    if(document.hidden){ if(timer){clearInterval(timer);timer=null;} setStatus('','一時停止中'); }
+    else { startPoll(); }
+  });
+
+  // ---- init ----
+  fillCfg();
+  if(!cfg.url || !cfg.token){ $('cfgWrap').open=true; setStatus('','未設定 — 接続設定を開いてください'); }
+  else { setStatus('check','接続中…'); startPoll(); }
+})();
+</script>
+</body>
+</html>
