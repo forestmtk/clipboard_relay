@@ -187,6 +187,7 @@
         <button class="recv" id="copyBtn" disabled>コピー</button>
         <button class="ghost" id="refreshBtn">今すぐ更新</button>
         <label class="toggle"><input type="checkbox" id="autoCopy"> 受信で自動コピー</label>
+        <label class="toggle" style="margin-left:0"><input type="checkbox" id="notifyNew"> 新着を通知</label>
       </div>
       <div class="say" id="recvSay"></div>
     </div>
@@ -285,7 +286,22 @@
   };
 
   var $ = function(id){ return document.getElementById(id); };
-  var timer=null, lastSig=null, paused=false;
+  var timer=null, lastSig=null;
+
+  // ---- 裏タブ用バッファ（フォーカスが無いとクリップボードに書けないため、戻った瞬間に書く） ----
+  var pendingText=null, pendingN=0, baseTitle=document.title;
+  function setBadge(){ document.title = pendingN>0 ? '● ('+pendingN+') '+baseTitle : baseTitle; }
+  function queueCopy(text){ pendingText=text; pendingN++; setBadge(); }
+  function flushPending(){
+    if(pendingText===null) return;
+    var t=pendingText;
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(function(){
+        pendingText=null; pendingN=0; setBadge();
+        say('recvSay','戻ったので自動コピーしました',true);
+      }).catch(function(){ /* まだフォーカス未取得なら次のfocusで再挑戦 */ });
+    }
+  }
 
   // ---- config UI ----
   function fillCfg(){
@@ -372,17 +388,18 @@
         $('recvCount').textContent = items.length ? (items.length+'件') : '';
         if(isNew && latest){
           var box=$('recvBox'); box.classList.add('flash'); setTimeout(function(){box.classList.remove('flash');},600);
-          if($('autoCopy').checked){ doCopy(latest.text, null); say('recvSay','自動コピーしました',true); }
+          if($('autoCopy').checked){ autoCopy(latest.text); }
+          if(document.hidden){ notifyNew(latest); }
         }
       }
-      setStatus(paused?'':'live', paused?'一時停止中':'接続中');
+      setStatus('live', document.hidden?'接続中（裏で受信）':'接続中');
       $('syncText').textContent='last '+fmt(new Date().toISOString());
     }).catch(function(){
       setStatus('err','接続できません（URL / デプロイ / ネットを確認）');
     });
   }
 
-  function startPoll(){ if(timer) clearInterval(timer); if(paused) return; poll(); timer=setInterval(poll, cfg.poll*1000); }
+  function startPoll(){ if(timer) clearInterval(timer); poll(); timer=setInterval(poll, cfg.poll*1000); }
 
   // ---- clipboard helpers ----
   function doCopy(text, btn, okLabel){
@@ -396,6 +413,41 @@
     document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta);
   }
   function say(id,msg,ok){ var el=$(id); el.textContent=msg; el.className='say '+(ok?'ok':'no'); setTimeout(function(){ if(el.textContent===msg){el.textContent='';el.className='say';} },2600); }
+
+  // 新着の自動コピー：前面ならその場で、裏ならバッファして戻った瞬間に
+  function autoCopy(text){
+    if(!document.hasFocus()){ queueCopy(text); return; }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){
+        say('recvSay','自動コピーしました',true);
+      }).catch(function(){ queueCopy(text); });
+    } else { fallbackCopy(text); say('recvSay','自動コピーしました',true); }
+  }
+
+  // 裏タブ時のデスクトップ通知（トグルON時のみ）
+  function notifyNew(item){
+    if(!$('notifyNew').checked) return;
+    if(!('Notification' in window) || Notification.permission!=='granted') return;
+    try{
+      var body=(item.text||'').slice(0,80);
+      var n=new Notification('RELAY: '+(item.device||'スマホ')+'から受信', {body:body, tag:'relay-new'});
+      n.onclick=function(){ try{window.focus();}catch(e){} this.close(); };
+    }catch(e){}
+  }
+  $('autoCopy').checked = lsGet('relay.autocopy')==='1';
+  $('autoCopy').onchange=function(){ lsSet('relay.autocopy', this.checked?'1':'0'); };
+  $('notifyNew').checked = lsGet('relay.notify')==='1';
+  $('notifyNew').onchange=function(){
+    lsSet('relay.notify', this.checked?'1':'0');
+    if(this.checked && 'Notification' in window && Notification.permission==='default'){
+      Notification.requestPermission().then(function(p){
+        if(p!=='granted'){ say('recvSay','ブラウザの通知が許可されていません',false); }
+      });
+    }
+    if(this.checked && 'Notification' in window && Notification.permission==='denied'){
+      say('recvSay','通知がブロック中。アドレスバーの🔒から許可してください',false);
+    }
+  };
 
   // ---- events ----
   $('copyBtn').onclick=function(){ var t=this.dataset.text||''; if(t){ doCopy(t,this,'コピー済'); } };
@@ -429,12 +481,12 @@
     }).catch(function(){ say('cfgSay','接続できません。URL・デプロイ設定・ネットを確認',false); });
   };
 
-  // pause polling when tab hidden (省エネ)
+  // 裏タブでもポーリング継続（ブラウザ側で間隔は自動的に間引かれる）。
+  // 前面に戻った瞬間：即ポーリング＋貯めていた新着をクリップボードへ。
   document.addEventListener('visibilitychange', function(){
-    paused = document.hidden;
-    if(document.hidden){ if(timer){clearInterval(timer);timer=null;} setStatus('','一時停止中'); }
-    else { startPoll(); }
+    if(!document.hidden){ poll(); flushPending(); }
   });
+  window.addEventListener('focus', flushPending);
 
   // ---- init ----
   fillCfg();
