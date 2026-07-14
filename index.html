@@ -130,6 +130,21 @@
   .say.ok{color:var(--recv-ink)}
   .say.no{color:var(--warn)}
 
+  /* ── smart layer (フェーズ2 v1: 端末内検知) ─────────── */
+  .smart{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  .schip{border:1px solid var(--line);border-left:3px solid var(--recv);border-radius:9px;background:var(--paper);padding:9px 11px}
+  .schip .tag{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--recv-ink)}
+  .schip .val{font-family:var(--mono);font-size:13.5px;word-break:break-all;margin:4px 0 7px}
+  .schip.otp .val{font-size:26px;font-weight:700;letter-spacing:.16em}
+  .schip .b{display:flex;gap:8px;flex-wrap:wrap}
+  .schip .b button,.schip .frow button{padding:4px 12px;font-size:12px}
+  .schip .frow{display:flex;align-items:center;gap:8px;margin:5px 0}
+  .schip .frow .k{font-family:var(--mono);font-size:11px;color:var(--muted);width:64px;flex:none}
+  .schip .frow .v{font-family:var(--mono);font-size:13.5px;word-break:break-all;margin-right:auto}
+  .schip.warn{border-left-color:var(--warn);background:rgba(219,82,39,.06)}
+  .schip.warn .tag{color:var(--warn)}
+  .schip .note2{font-size:12px;margin-top:3px;line-height:1.6}
+
   /* ── history ────────────────────────────────────────── */
   details{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   summary{cursor:pointer;list-style:none;padding:13px 16px;font-family:var(--disp);font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
@@ -183,6 +198,7 @@
       </div>
       <div class="payload empty" id="recvBox">まだ受信していません。iPhoneのショートカットから送ると、ここに表示されます。</div>
       <div class="meta" id="recvMeta"></div>
+      <div class="smart" id="smart"></div>
       <div class="row">
         <button class="recv" id="copyBtn" disabled>コピー</button>
         <button class="ghost" id="refreshBtn">今すぐ更新</button>
@@ -351,12 +367,13 @@
     if(!item || !item.text){
       box.className='payload empty';
       box.textContent='まだ受信していません。iPhoneのショートカットから送ると、ここに表示されます。';
-      meta.textContent=''; copy.disabled=true; copy.dataset.text=''; return;
+      meta.textContent=''; copy.disabled=true; copy.dataset.text=''; renderSmart(''); return;
     }
     box.className='payload';
     box.textContent=item.text;
     meta.innerHTML='<span class="from">'+esc(item.device||'—')+'</span><span>'+fmt(item.time)+' 受信</span>';
     copy.disabled=false; copy.dataset.text=item.text;
+    renderSmart(item.text);
   }
   function renderHist(items){
     var h=$('hist');
@@ -374,6 +391,108 @@
     });
   }
   function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  // ---- フェーズ2 v1: スマート検知（すべて端末内・正規表現のみ。外部送信なし） ----
+  function z2h(s){ return String(s).replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);}); }
+  function detect(text){
+    var t=String(text||'').trim();
+    if(!t || t.length>4000) return [];
+    var tz=z2h(t), out=[];
+
+    // 守秘ガード: 12桁（個人番号の可能性）
+    var mn=tz.match(/(?:^|\D)(\d{4})[\-\s]?(\d{4})[\-\s]?(\d{4})(?!\d)/);
+
+    // 振込情報
+    var bank=t.match(/([^\s、。・:：「」()（）]{2,12}(?:銀行|信用金庫|信用組合|労働金庫)|ゆうちょ)/);
+    var branch=t.match(/([^\s、。・:：「」()（）]{1,12}(?:支店|出張所|営業部))/);
+    var ktype=t.match(/(普通|当座|貯蓄)/);
+    var acct=tz.match(/(?:^|\D)(\d{7})(?!\d)/);
+    var name=t.match(/(?:名義|口座名義?|カナ)[人]?[：:\s]*([^\n\r、。]{2,30})/);
+    var isBank=!!(bank && (acct || (branch && ktype)));
+
+    // 2FAコード（文脈語つき優先、短文の単独数字は補助的に）
+    var otp=tz.match(/(?:認証|確認|検証|ワンタイム|セキュリティ|コード|ｺｰﾄﾞ|code|OTP|PIN|passcode)[^0-9]{0,12}(\d{4,8})(?!\d)/i);
+    if(otp && isBank && acct && otp[1]===acct[1]) otp=null;
+    if(!otp && !isBank && t.length<=40 && !/[円¥￥]/.test(t)){
+      var solo=tz.match(/(?:^|\D)(\d{4,8})(?!\d)/);
+      if(solo) otp=[null,solo[1]];
+    }
+
+    // 金額
+    var amts=[], re=/[¥￥]\s*([0-9０-９][0-9０-９,，]{0,14})|([0-9０-９][0-9０-９,，]{0,14})\s*円/g, m;
+    while((m=re.exec(t)) && amts.length<3){
+      var raw=z2h(m[1]||m[2]).replace(/[,，]/g,'');
+      if(/^\d{1,12}$/.test(raw) && amts.indexOf(raw)<0 && !(acct && raw===acct[1])) amts.push(raw);
+    }
+
+    // 住所
+    var addr=t.match(/((?:北海道|東京都|京都府|大阪府|[一-龥]{2,3}県)[^\n\r、。]{3,40})/);
+
+    // URL
+    var urls=(t.match(/https?:\/\/[^\s<>"'）)、。]+/g)||[]).slice(0,3);
+
+    // 表示順: 守秘ガード → 2FA → 振込 → 金額 → 住所 → URL
+    if(mn) out.push({type:'warn',tag:'守秘ガード',val:mn[1]+'-****-****',
+      note:'個人番号の可能性がある12桁を検知しました。中継への掲載と取り扱いにご注意ください。'});
+    if(otp) out.push({type:'otp',tag:'2FAコード',val:otp[1],
+      actions:[{label:'コピー',copy:otp[1]}]});
+    if(isBank){
+      var fields=[{k:'銀行',v:bank[1]}];
+      if(branch) fields.push({k:'支店',v:branch[1]});
+      if(ktype) fields.push({k:'種別',v:ktype[1]});
+      if(acct) fields.push({k:'口座番号',v:acct[1]});
+      if(name) fields.push({k:'名義',v:name[1].trim()});
+      out.push({type:'bank',tag:'振込情報',fields:fields});
+    }
+    amts.forEach(function(a){
+      var pretty=Number(a).toLocaleString('ja-JP');
+      out.push({type:'amt',tag:'金額',val:'¥'+pretty,
+        actions:[{label:'数値をコピー',copy:a},{label:'カンマ付きをコピー',copy:pretty}]});
+    });
+    if(addr){
+      var a2=addr[1].trim();
+      out.push({type:'addr',tag:'住所',val:a2,actions:[
+        {label:'地図で開く',run:function(){window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(a2),'_blank','noopener');}},
+        {label:'コピー',copy:a2}]});
+    }
+    urls.forEach(function(u){
+      out.push({type:'url',tag:'URL',val:u,actions:[
+        {label:'開く',run:function(){window.open(u,'_blank','noopener');}},
+        {label:'コピー',copy:u}]});
+    });
+    return out;
+  }
+  function renderSmart(text){
+    var boxS=$('smart'); boxS.innerHTML='';
+    detect(text).forEach(function(x){
+      var el=document.createElement('div'); el.className='schip '+x.type;
+      var tag=document.createElement('div'); tag.className='tag'; tag.textContent=x.tag; el.appendChild(tag);
+      if(x.fields){
+        x.fields.forEach(function(fd){
+          var row=document.createElement('div'); row.className='frow';
+          var k=document.createElement('span'); k.className='k'; k.textContent=fd.k;
+          var v=document.createElement('span'); v.className='v'; v.textContent=fd.v;
+          var b=document.createElement('button'); b.type='button'; b.textContent='コピー';
+          b.onclick=function(){ doCopy(fd.v,b,'✓'); };
+          row.appendChild(k); row.appendChild(v); row.appendChild(b);
+          el.appendChild(row);
+        });
+      }else if(x.val){
+        var v2=document.createElement('div'); v2.className='val'; v2.textContent=x.val; el.appendChild(v2);
+      }
+      if(x.note){ var n=document.createElement('div'); n.className='note2'; n.textContent=x.note; el.appendChild(n); }
+      if(x.actions){
+        var bb=document.createElement('div'); bb.className='b';
+        x.actions.forEach(function(a){
+          var btn=document.createElement('button'); btn.type='button'; btn.textContent=a.label;
+          btn.onclick=function(){ if(a.copy!==undefined){ doCopy(a.copy,btn,'✓'); } else if(a.run){ a.run(); } };
+          bb.appendChild(btn);
+        });
+        el.appendChild(bb);
+      }
+      boxS.appendChild(el);
+    });
+  }
 
   function poll(){
     if(!cfg.url || !cfg.token){ setStatus('','未設定 — 接続設定を開いてください'); return; }
