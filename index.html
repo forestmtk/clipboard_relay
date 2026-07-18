@@ -171,6 +171,22 @@
   ol.steps{margin:6px 0 0;padding-left:20px;font-size:13px;color:var(--ink)}
   ol.steps li{margin:5px 0}
   .warnbox{border-left:3px solid var(--warn);background:rgba(219,82,39,.06);border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--ink);margin-top:10px}
+
+  /* ── 自己診断（?selftest=1 のときだけ表示） ─────────── */
+  .st{margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px}
+  .st h2{font-family:var(--disp);font-size:14px;margin:0 0 2px;letter-spacing:.01em}
+  .st .lead{font-size:12px;color:var(--muted);margin:0 0 12px}
+  .st .score{font-family:var(--mono);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;margin-left:8px}
+  .st .score.ok{background:rgba(14,156,126,.12);color:var(--recv-ink)}
+  .st .score.no{background:rgba(219,82,39,.12);color:var(--warn)}
+  .st .c{border-top:1px solid var(--line);padding:9px 0;display:grid;grid-template-columns:22px 1fr;gap:9px;align-items:start}
+  .st .c .k{font-family:var(--mono);font-size:11px;font-weight:700;line-height:1.5}
+  .st .c.p .k{color:var(--recv-ink)}
+  .st .c.f .k{color:var(--warn)}
+  .st .c .n{font-size:12.5px;font-weight:500}
+  .st .c .d{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;margin-top:3px;line-height:1.65}
+  .st .c .d b{color:var(--warn);font-weight:700}
+  .st .c.f{background:rgba(219,82,39,.045);border-radius:8px;padding-left:8px;padding-right:8px}
 </style>
 </head>
 <body>
@@ -193,7 +209,7 @@
     <div class="card recv">
       <div class="head">
         <span class="ic">↓</span>
-        <h2>スマホから受信</h2>
+        <h2>受信</h2>
         <span class="sub" id="recvCount"></span>
       </div>
       <div class="payload empty" id="recvBox">まだ受信していません。iPhoneのショートカットから送ると、ここに表示されます。</div>
@@ -212,7 +228,7 @@
     <div class="card send">
       <div class="head">
         <span class="ic">↑</span>
-        <h2>スマホへ送信</h2>
+        <h2>送信</h2>
       </div>
       <textarea id="sendText" placeholder="ここに入力、または『PCからコピーを貼付』で流し込み"></textarea>
       <div class="row">
@@ -400,20 +416,20 @@
     var tz=z2h(t), out=[];
 
     // 守秘ガード: 12桁（個人番号の可能性）
-    var mn=tz.match(/(?:^|\D)(\d{4})[\-\s]?(\d{4})[\-\s]?(\d{4})(?!\d)/);
+    var mn=tz.match(/(?:^|\D)(\d{4})[\-‐‑–—―−ー－\s]?(\d{4})[\-‐‑–—―−ー－\s]?(\d{4})(?!\d)/);
 
     // 振込情報
-    var bank=t.match(/([^\s、。・:：「」()（）]{2,12}(?:銀行|信用金庫|信用組合|労働金庫)|ゆうちょ)/);
-    var branch=t.match(/([^\s、。・:：「」()（）]{1,12}(?:支店|出張所|営業部))/);
+    var bank=t.match(/([^\s、。・:：「」()（）はをへにでとがの]{2,12}(?:銀行|信用金庫|信用組合|労働金庫)|ゆうちょ)/);
+    var branch=t.match(/([^\s、。・:：「」()（）はをへにでとがの]{1,12}(?:支店|出張所|営業部))/);
     var ktype=t.match(/(普通|当座|貯蓄)/);
     var acct=tz.match(/(?:^|\D)(\d{7})(?!\d)/);
-    var name=t.match(/(?:名義|口座名義?|カナ)[人]?[：:\s]*([^\n\r、。]{2,30})/);
+    var name=t.match(/(?:名義|口座名義?|カナ)[人]?[：:\s]+([^\n\r、。\s]{2,30})/);
     var isBank=!!(bank && (acct || (branch && ktype)));
 
     // 2FAコード（文脈語つき優先、短文の単独数字は補助的に）
     var otp=tz.match(/(?:認証|確認|検証|ワンタイム|セキュリティ|コード|ｺｰﾄﾞ|code|OTP|PIN|passcode)[^0-9]{0,12}(\d{4,8})(?!\d)/i);
     if(otp && isBank && acct && otp[1]===acct[1]) otp=null;
-    if(!otp && !isBank && t.length<=40 && !/[円¥￥]/.test(t)){
+    if(!otp && !mn && !isBank && t.length<=40 && !/[円¥￥]/.test(t)){
       var solo=tz.match(/(?:^|\D)(\d{4,8})(?!\d)/);
       if(solo) otp=[null,solo[1]];
     }
@@ -426,7 +442,7 @@
     }
 
     // 住所
-    var addr=t.match(/((?:北海道|東京都|京都府|大阪府|[一-龥]{2,3}県)[^\n\r、。]{3,40})/);
+    var addr=t.match(/((?:北海道|東京都|京都府|大阪府|[一-龥]{2,3}県)[^\n\r、。\s（）()「」はをへ]{0,10}?[市区町村郡][^\n\r、。\s（）()「」はをへ]{0,10}?(?:[0-9０-９]{1,4}(?:[\-‐‑−ー－][0-9０-９]{1,4}){1,3}|[0-9０-９]{1,4}(?:丁目|条|番地|番|号))(?:[一-龥ァ-ヴ]{0,3}(?:[0-9０-９]{1,4}(?:[\-‐‑−ー－][0-9０-９]{1,4}){1,3}|[0-9０-９]{1,4}(?:丁目|条|番地|番|号)))*(?:番地|番|号)?)/);
 
     // URL
     var urls=(t.match(/https?:\/\/[^\s<>"'）)、。]+/g)||[]).slice(0,3);
@@ -549,7 +565,7 @@
     if(!('Notification' in window) || Notification.permission!=='granted') return;
     try{
       var body=(item.text||'').slice(0,80);
-      var n=new Notification('RELAY: '+(item.device||'スマホ')+'から受信', {body:body, tag:'relay-new'});
+      var n=new Notification('RELAY: '+(item.device||'不明な端末')+'から受信', {body:body, tag:'relay-new'});
       n.onclick=function(){ try{window.focus();}catch(e){} this.close(); };
     }catch(e){}
   }
@@ -577,7 +593,7 @@
     if(!cfg.url||!cfg.token){ say('sendSay','先に接続設定をしてください',false); return; }
     this.disabled=true;
     apiPost({token:cfg.token, device:cfg.device, text:t}).then(function(res){
-      if(res && res.ok){ say('sendSay','スマホへ送信しました',true); }
+      if(res && res.ok){ say('sendSay','送信しました',true); }
       else { say('sendSay', (res&&res.error==='unauthorized')?'合言葉が一致しません':'送信に失敗しました', false); }
     }).catch(function(){ say('sendSay','送信に失敗しました（接続を確認）',false); })
     .then(function(){ $('sendBtn').disabled=false; });
@@ -606,6 +622,72 @@
     if(!document.hidden){ poll(); flushPending(); }
   });
   window.addEventListener('focus', flushPending);
+
+
+  // ---- 自己診断 ------------------------------------------------------------
+  // index.html?selftest=1 で起動。上の detect() を実コードのまま直接叩くので、
+  // 検知エンジンを触ったらここが即座に落ちる（テストとコードが乖離しない）。
+  // 出荷時に削るなら、このブロックと <style> 内の .st ルールを消せばよい。
+  function stFmt(r){
+    if(!r.length) return '（検知なし）';
+    return r.map(function(x){
+      return x.tag+'='+(x.fields ? x.fields.map(function(f){return f.k+':'+f.v;}).join(' | ') : x.val);
+    }).join(' / ');
+  }
+  var ST_CASES=[
+    // ▼ 2026-07-18 実地で釣れた誤検知。住所の終端が無く、句点まで37文字を丸飲みしていた。
+    //    「地図で開く」で飲み込んだ全文がGoogleに飛ぶ構造だったため、検知ゼロが正解。
+    ['実地/ニュース文（住所の丸飲み）','日本バスケットボール協会（JBA）は7月17日、日本代表（FIBAランキング22位）が出場する「FIBA バスケットボールワールドカップ2027 アジア地区予選」Window4のホームゲームを東京都江東区青海のTOYOTA ARENA TOKYOにて開催することを発表した。','（検知なし）'],
+    ['実地/戦績文','日本は4勝2敗で1次ラウンドを突破。2次ラウンドでは5勝1敗のレバノン代表（同33位）、4勝2敗のカタール代表（同78位）、3勝3敗のサウジアラビア代表（66位）とそれぞれホーム＆アウェーで対戦する。','（検知なし）'],
+
+    ['守秘/半角ハイフン','マイナンバーは 1234-5678-9012 です','守秘ガード=1234-****-****'],
+    // ▼ iPhoneの日本語キーボードは全角ハイフンを打つ。ここが守秘ガードを素通りしていた。
+    ['守秘/全角ハイフン','マイナンバーは １２３４－５６７８－９０１２ です','守秘ガード=1234-****-****'],
+    ['守秘/全角スペース','マイナンバー １２３４　５６７８　９０１２','守秘ガード=1234-****-****'],
+
+    ['2FA/文脈語つき','【サンプル】認証コードは 483920 です。','2FAコード=483920'],
+    ['2FA/単独数字','882134','2FAコード=882134'],
+
+    ['住所/基本','東京都千代田区丸の内1-1-1','住所=東京都千代田区丸の内1-1-1'],
+    ['住所/ひらがな市名','茨城県つくば市天王台1-1-1','住所=茨城県つくば市天王台1-1-1'],
+    ['住所/全ひらがな町名','神奈川県横浜市西区みなとみらい2-2-1','住所=神奈川県横浜市西区みなとみらい2-2-1'],
+    ['住所/「が」入り町名','東京都千代田区霞が関1-1-1','住所=東京都千代田区霞が関1-1-1'],
+    ['住所/条・丁目','北海道札幌市中央区北1条西2丁目','住所=北海道札幌市中央区北1条西2丁目'],
+    ['住所/丁目番号','大阪府大阪市北区梅田3丁目1番3号','住所=大阪府大阪市北区梅田3丁目1番3号'],
+    ['住所/建物名は落とす','請求書の送付先は東京都港区六本木6-10-1 森タワーです。','住所=東京都港区六本木6-10-1'],
+    ['住所/文中','本店を大阪府大阪市中央区本町2-1-6に移転しました。','住所=大阪府大阪市中央区本町2-1-6'],
+    ['住所FP/裸の数字','東京都渋谷区で3人が集まった','（検知なし）'],
+    ['住所FP/府警','京都府警は3人を書類送検した','（検知なし）'],
+
+    ['振込/銀行名の後方貪欲','お振込は三菱UFJ銀行 新宿支店 普通 1234567','振込情報=銀行:三菱UFJ銀行 | 支店:新宿支店 | 種別:普通 | 口座番号:1234567'],
+    ['振込/支店名の後方貪欲','振込先は みずほ銀行の新宿支店 普通 1112223 です','振込情報=銀行:みずほ銀行 | 支店:新宿支店 | 種別:普通 | 口座番号:1112223'],
+    ['振込/「カナダ」誤爆','三菱UFJ銀行 新宿支店 普通 1234567 カナダ旅行の精算です','振込情報=銀行:三菱UFJ銀行 | 支店:新宿支店 | 種別:普通 | 口座番号:1234567'],
+    // ▼ 名義が金額と顧問先の住所まで飲み込んでいた。振込カードはくさびの中心。
+    ['振込/名義が全部を飲む','三菱UFJ銀行 新宿支店 普通 1234567 名義:カ)サンプル 金額 550,000円 送付先は東京都新宿区西新宿2-8-1です','振込情報=銀行:三菱UFJ銀行 | 支店:新宿支店 | 種別:普通 | 口座番号:1234567 | 名義:カ)サンプル / 金額=¥550,000 / 住所=東京都新宿区西新宿2-8-1'],
+    ['振込/改行区切り','三菱UFJ銀行\n新宿支店 普通\n口座番号 1234567\n名義 カ)サンプルシヨウジ\n￥550,000','振込情報=銀行:三菱UFJ銀行 | 支店:新宿支店 | 種別:普通 | 口座番号:1234567 | 名義:カ)サンプルシヨウジ / 金額=¥550,000'],
+
+    ['URL','資料はこちら https://example.com/a/b?x=1 です','URL=https://example.com/a/b?x=1']
+  ];
+  function runSelftest(){
+    var box=document.createElement('div'); box.className='st';
+    var ng=0, rows='';
+    for(var i=0;i<ST_CASES.length;i++){
+      var c=ST_CASES[i], got;
+      try{ got=stFmt(detect(c[1])); }catch(e){ got='例外: '+e.message; }
+      var ok=(got===c[2]); if(!ok) ng++;
+      rows+='<div class="c '+(ok?'p':'f')+'"><div class="k">'+(ok?'ok':'NG')+'</div><div>'
+          +'<div class="n">'+esc(c[0])+'</div>'
+          +(ok?'<div class="d">'+esc(got)+'</div>'
+             :'<div class="d">実際: <b>'+esc(got)+'</b><br>期待: '+esc(c[2])+'</div>')
+          +'</div></div>';
+    }
+    var pass=ST_CASES.length-ng;
+    box.innerHTML='<h2>自己診断 — 検知エンジン<span class="score '+(ng?'no':'ok')+'">'+pass+' / '+ST_CASES.length+'</span></h2>'
+      +'<p class="lead">端末内のdetect()を実コードのまま実行しています。外部への送信はありません。</p>'+rows;
+    document.querySelector('.wrap').appendChild(box);
+    document.title=(ng?'✗ '+ng+' NG':'✓ all pass')+' — RELAY selftest';
+  }
+  if(/(?:^|[?&])selftest=1(?:&|$)/.test(location.search)) runSelftest();
 
   // ---- init ----
   fillCfg();
